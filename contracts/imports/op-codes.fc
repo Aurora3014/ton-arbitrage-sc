@@ -1,0 +1,12 @@
+int op::transfer() asm "0xf8a7ea5 PUSHINT";
+int op::transfer_notification() asm "0x7362d09c PUSHINT";
+int op::internal_transfer() asm "0x178d4519 PUSHINT";
+int op::excesses() asm "0xd53276db PUSHINT";
+int op::burn() asm "0x595f07bc PUSHINT";
+int op::burn_notification() asm "0x7bdd97de PUSHINT";
+int op::add_liquidity_ston_fi() asm "0xfcf9e58f PUSHINT";
+int op::dex_v2_swap() asm "0x6664de2a PUSHINT";
+;; Minter
+int op::mint() asm "21 PUSHINT";
+int op::pton_transfer() asm "0x01f3835d PUSHINT";
+int op::dedust_payout() asm "0x474f86cf PUSHINT";

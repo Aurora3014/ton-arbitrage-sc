@@ -1,0 +1,590 @@
+#include "imports/stdlib.fc";
+#include "imports/op-codes.fc";
+#include "imports/params.fc";
+#include "imports/constants.fc";
+#include "imports/jetton-utils.fc";
+(int) divc (int x, int y) asm "DIVC";
+
+const GAS_STON_FI_TON_JETTON = 215000000;
+const GAS_STON_FI_JETTON_TON = 260000000;
+const GAS_DEDUST_IO_TON_JETTON = 25000000;
+
+const TON_VAULT_ADDRESS_DEDUST = "EQDa4VOnTYlLvDJ0gZjNYm5PXfSmmtL6Vs6A_CZEtXCNICq_"a;
+const TON_VAULT_ADDRESS_STON_FI = "EQARULUYsmJq1RiZ-YiH-IJLcAZUVkVff-KBPwEmmaQGH6aC"a;
+const STON_FI_ADDRESS = "EQB3ncyBUTjZUA5EnFKR5_EnOMI9V1tTEAAPaiU71gc4TiUt"a;
+
+global cell storage::dict_further_swap_infos;
+;; should be initlaize as 0
+global slice storage::owner_address;
+;; save data into storage  ;; 1023 limit 
+() save_storage() impure inline { 
+    set_data(begin_cell()
+        .store_slice(storage::owner_address) ;; 256
+        .store_dict(storage::dict_further_swap_infos)
+        .end_cell()
+    );
+}
+
+;;send ton 
+() send_ton(slice address, int amount) impure inline {
+    var msg = begin_cell()
+          .store_uint(0x10, 6) ;; nobounce
+          .store_slice(address)
+          .store_coins(amount)
+          .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+          .end_cell();  
+
+    send_raw_message(msg, 1);
+}
+;; load_data from storage
+() load_storage() impure inline {
+    slice ds = get_data().begin_parse();
+    storage::owner_address = ds~load_msg_addr();
+    storage::dict_further_swap_infos = ds~load_dict();
+}
+
+;; send jetton message
+() send_jetton(
+    int ton_amount, 
+    int jetton_amount, 
+    int query_id, 
+    slice to_address, 
+    slice jetton_wallet_address, 
+    int fwd_amount,
+    int exit_code,
+    slice forward_payload
+) impure inline {
+
+    cell body = begin_cell()
+        .store_uint(0xf8a7ea5, 32)
+        .store_uint(query_id, 64)
+        .store_coins(jetton_amount)
+        .store_slice(to_address) ;; dest main ton address
+        .store_slice(to_address)  ;; me main ton address
+        .store_uint(0, 1)
+        .store_coins(fwd_amount) ;; forward_ton_amount
+        .store_uint(1, 1)
+        .store_ref(
+        begin_cell()
+            .store_uint(0, 32)
+            .store_slice(forward_payload)
+            .end_cell()
+    )
+        .end_cell();
+
+    cell msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(jetton_wallet_address)  ;; my jetton wallet address.
+        .store_coins(ton_amount + GAS_DEDUST_IO_TON_JETTON)
+        .store_uint(1,107)
+        .store_ref(body)
+        .end_cell();
+
+    send_raw_message(msg, 1);
+
+}
+;;   dest is EQARULUYsmJq1RiZ-YiH-IJLcAZUVkVff-KBPwEmmaQGH6aC msg =>  EQB3ncyBUTjZUA5EnFKR5_EnOMI9V1tTEAAPaiU71gc4TiUt
+() swap_ston_fi_v1 (
+    int in_jetton_amount,
+    int send_ton_amount,
+    int query_id,
+    slice from_jetton_wallet_address,
+    slice to_ston_fi_jetton_wallet_address,
+    slice receiver_address,
+    int min_ask_amount
+) impure inline {
+    cell payload = begin_cell()
+        .store_uint(0x25938561, 32)
+        .store_slice(to_ston_fi_jetton_wallet_address) ;; target jetton wallet 
+        .store_grams(min_ask_amount)
+        .store_slice(receiver_address)
+        .store_uint(0, 1)
+        .end_cell();
+
+    cell body = begin_cell()
+        .store_uint(op::transfer(), 32)
+        .store_uint(query_id, 64)
+        .store_grams(in_jetton_amount)
+        .store_slice(STON_FI_ADDRESS)
+        .store_slice(receiver_address)  ;; me main ton address
+        .store_uint(0, 1)
+        .store_coins(185000000) ;; forward_ton_amount
+        .store_uint(1, 1)
+        .store_ref(payload)
+        .end_cell();
+
+    cell msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(from_jetton_wallet_address)  ;; destination
+        .store_coins(in_jetton_amount + GAS_STON_FI_TON_JETTON)
+        .store_uint(1, 107)
+        .store_ref(body)
+        .end_cell();
+
+    send_raw_message(msg, 3);
+}
+;;  pTON address if specified router
+() swap_ston_fi_v2_ton_to_jetton (
+    int in_jetton_amount,
+    int send_ton_amount,
+    int query_id,
+    slice from_jetton_wallet_address,
+    slice to_ston_fi_jetton_wallet_address,
+    slice receiver_address,
+    int min_ask_amount,
+    slice router_address
+) impure inline {   
+    cell payload = begin_cell()
+        .store_uint(0x6664de2a, 32)
+        .store_slice(to_ston_fi_jetton_wallet_address)
+        .store_slice(receiver_address) ;; to_wallet
+        .store_slice(my_address()) ;; refund_address
+        .store_uint(now() + 15 * 60, 64)
+        .store_ref(
+        begin_cell()
+            .store_grams(min_ask_amount)
+            .store_slice(receiver_address)
+            .store_grams(10000000)
+            .store_maybe_ref(begin_cell().end_cell())
+            .store_grams(0)
+            .store_maybe_ref(begin_cell().end_cell())
+            .store_uint(10, 16)
+            .store_slice(my_address()) ;; ref address
+            .end_cell()
+    )
+        .end_cell();
+
+    cell body = begin_cell()
+        .store_uint(0x01f3835d, 32)
+        .store_uint(query_id, 64)
+        .store_grams(in_jetton_amount)
+        .store_slice(router_address)
+        .store_uint(1, 1)
+        .store_ref(payload)
+        .end_cell();
+
+    cell msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(from_jetton_wallet_address)  ;; destination
+        .store_coins(send_ton_amount)
+        .store_uint(1, 107)
+        .store_ref(body)
+        .end_cell();
+
+    send_raw_message(msg, 3);
+}
+
+;;  pTON address if specified router
+() swap_ston_fi_v2_jetton_to_ton (
+    int in_jetton_amount,
+    int send_ton_amount,
+    int query_id,
+    slice from_jetton_wallet_address,
+    slice to_ston_fi_jetton_wallet_address,
+    slice receiver_address,
+    int min_ask_amount,
+    slice router_address
+) impure inline {
+    cell payload = begin_cell()
+        .store_uint(0x6664de2a, 32)
+        .store_slice(to_ston_fi_jetton_wallet_address)
+        .store_slice(receiver_address) ;; to_wallet
+        .store_slice(receiver_address) ;; refund_address
+        .store_uint(now() + 15 * 60, 64)
+        .store_ref(
+            begin_cell()
+                .store_grams(min_ask_amount)
+                .store_slice(receiver_address)
+                .store_grams(10000000)
+                .store_maybe_ref(begin_cell().end_cell())
+                .store_grams(0)
+                .store_maybe_ref(begin_cell().end_cell())
+                .store_uint(10, 16)
+                .store_slice(my_address()) ;; ref address
+                .end_cell()
+        )
+        .end_cell();
+
+    cell body = begin_cell()
+        .store_uint(op::transfer(), 32)
+        .store_uint(query_id, 64)
+        .store_grams(in_jetton_amount)
+        .store_slice(router_address)
+        .store_slice(receiver_address)
+        .store_uint(0, 1)
+        .store_coins(210000000) ;; forward_ton_amount
+        .store_uint(1, 1)
+        .store_ref(payload)
+        .end_cell();
+
+    cell msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(from_jetton_wallet_address)  ;; destination
+        .store_coins(send_ton_amount)
+        .store_uint(1, 107)
+        .store_ref(body)
+        .end_cell();
+
+    send_raw_message(msg, 3);
+}
+
+;;  EQDa4VOnTYlLvDJ0gZjNYm5PXfSmmtL6Vs6A_CZEtXCNICq_
+() swap_dedust_io_ton_to_jetton (
+    int ton_amount,   ;; with gas fee defined top,
+    int query_id,
+    slice from_jetton_wallet_address,
+    slice pool_address,
+    slice receiver_address,
+    int min_ask_amount
+) impure inline {
+
+    cell custom_payload = begin_cell()
+        .end_cell();
+
+    cell swapParams = begin_cell()
+        .store_uint(0,32)
+        .store_slice(receiver_address)
+        .store_slice(zero_address())
+        .store_maybe_ref(custom_payload)
+        .store_uint(0, 1)
+        .end_cell();
+
+    cell body = begin_cell()
+        .store_uint(0xea06185d, 32)
+        .store_uint(query_id, 64)
+        .store_coins(ton_amount) ;; jetton vault address for token
+        .store_slice(pool_address)
+        .store_bool(0)
+        .store_coins(min_ask_amount)
+        .store_uint(0, 1)
+        .store_ref(swapParams)
+        .end_cell();
+
+    cell msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(from_jetton_wallet_address)  ;; destination
+        .store_coins(ton_amount + 200000000)
+        .store_uint(1, 107)
+        .store_ref(body)
+        .end_cell();
+
+    send_raw_message(msg, 3);
+}
+
+() swap_dedust_io_jetton_to_ton (
+    int in_jetton_amount,   ;; with gas fee defined top,
+    int query_id,
+    slice sender_from_jetton_wallet,
+    slice jetton_vault_address,
+    slice pool_address,
+    slice receiver_address,
+    int min_ask_amount
+) impure inline {
+
+    cell custom_payload = begin_cell()
+        .end_cell();
+
+    cell swap_params = begin_cell()
+        .store_uint(0,32)
+        .store_slice(receiver_address)
+        .store_slice(zero_address())
+        .store_maybe_ref(custom_payload)
+        .store_uint(0, 1)
+        .end_cell();
+
+    cell forward_payload = begin_cell()
+        .store_uint(3818968194,32)
+        .store_slice(pool_address)
+        .store_bool(0)
+        .store_coins(min_ask_amount)
+        .store_uint(0, 1)
+        .store_ref(swap_params)
+        .end_cell();
+
+    cell body = begin_cell()
+        .store_uint(op::transfer(), 32)
+        .store_uint(query_id, 64)
+        .store_coins(in_jetton_amount) ;; jetton vault address for token
+        .store_slice(jetton_vault_address)
+        .store_slice(receiver_address)
+        .store_bool(0)
+        .store_coins(150000000)
+        .store_uint(1, 1)
+        .store_ref(forward_payload)
+        .end_cell();
+
+    cell msg = begin_cell()
+        .store_uint(0x18, 6)
+        .store_slice(sender_from_jetton_wallet)  ;; destination
+        .store_coins(200000000)
+        .store_uint(1, 107)
+        .store_ref(body)
+        .end_cell();
+
+    send_raw_message(msg, 3);
+}
+
+() recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
+
+    load_storage();
+    var cs = in_msg_cell.begin_parse();
+    var flags = cs~load_uint(4); 
+    if (flags & 1) {
+        return ();
+    }
+
+    int op = 0;
+
+    if (in_msg.slice_empty?() == false){
+        op = in_msg~load_uint(32);
+    }
+    slice s_addr = cs~load_msg_addr();
+    ;; send swap message and dedust will send tokens to user address
+
+    int query_id = in_msg~load_uint(64);
+
+    if (op == 0xfa0614af){
+        int out = 0;
+        int gas = 50000000; ;;min 0.5 TON
+        int input_ton = msg_value - gas;
+        int ton_total_amount = 0;
+        slice jetton_minter_address = in_msg~load_msg_addr();
+        slice jetton_wallet_address = in_msg~load_msg_addr();
+        throw_unless(450, msg_value >= GAS_STON_FI_TON_JETTON * 2 + gas);
+
+        ;; calculate token variant and save into dict
+        int new_query_id = rand(2 ^ 64);
+        cell data_cell = in_msg~load_ref();
+        slice data_slice = data_cell.begin_parse();
+
+        int ton_in_amount = data_slice~load_coins();
+        int min_ask_amount = data_slice~load_coins();
+        slice to_jetton_wallet_address = data_slice~load_msg_addr();
+        int pool_type = data_slice~load_uint(32);
+
+        if(pool_type == 0){
+            swap_dedust_io_ton_to_jetton(ton_in_amount,new_query_id,TON_VAULT_ADDRESS_DEDUST,to_jetton_wallet_address,my_address(),min_ask_amount);
+        }
+
+        if (pool_type == 1){
+            swap_ston_fi_v1(ton_in_amount, ton_in_amount + GAS_STON_FI_TON_JETTON, new_query_id, TON_VAULT_ADDRESS_STON_FI, to_jetton_wallet_address, my_address(), min_ask_amount);
+        }
+        if (pool_type == 2){
+            slice router_address = data_slice~load_msg_addr();
+            slice pton_wallet_address = data_slice~load_msg_addr();
+
+            swap_ston_fi_v2_ton_to_jetton(ton_in_amount, ton_in_amount + GAS_STON_FI_TON_JETTON, new_query_id, pton_wallet_address, to_jetton_wallet_address, my_address(), min_ask_amount, router_address);
+        }
+        ton_total_amount += ton_in_amount;
+        storage::dict_further_swap_infos~udict_set_builder(
+            64,
+            new_query_id,
+            begin_cell()
+                .store_coins(min_ask_amount)
+                .store_uint(pool_type, 32)
+                .store_slice(data_slice)
+        );
+        
+        ;; send swap message and dedust will send tokens to user address
+        
+        save_storage();
+    }
+
+    if (op == op::transfer_notification()){
+        int gas = 50000000;
+
+        int amount_jetton = in_msg~load_coins();
+        slice from_user_address = in_msg~load_msg_addr();
+        cell forward_payload = in_msg~load_maybe_ref();
+        (slice data, int found) = storage::dict_further_swap_infos.udict_get?(64, query_id);
+        data~load_coins();
+        int buy_pool_type = data~load_uint(32);
+        int pool_type = data~load_uint(32);
+        int total_jetton_amount = 0;
+        int in_jetton_amount = amount_jetton;
+        if( (found != 0) & ((buy_pool_type == 0) | (buy_pool_type == 2)) ){
+            if(pool_type == 0){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+                slice sender_from_jetton_wallet = s_addr;
+                
+                slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice pool_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                int min_ask_amount = sell_swap_data_slice~load_coins(); ;; 127
+
+                swap_dedust_io_jetton_to_ton(in_jetton_amount, query_id, sender_from_jetton_wallet, vault_address, pool_address, receiver_address, min_ask_amount);
+                storage::dict_further_swap_infos~udict_delete?(64, query_id);
+                save_storage();
+            } 
+
+            if(pool_type == 1){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+
+                slice jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;;256
+                slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                int min_ask_amount = sell_swap_data_slice~load_coins(); ;; 127
+
+                swap_ston_fi_v1(in_jetton_amount, GAS_STON_FI_JETTON_TON, query_id, jetton_wallet_address, vault_address, receiver_address, min_ask_amount);
+                storage::dict_further_swap_infos~udict_delete?(64, query_id);
+                save_storage();
+            }
+            
+            if (pool_type == 2){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+
+                slice jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice to_jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                int min_ask_amount = sell_swap_data_slice~load_coins(); ;; 127
+
+                cell extra_info = sell_swap_data_slice~load_ref();
+                slice extra_info_slice = extra_info.begin_parse();
+
+                slice router_address = extra_info_slice~load_msg_addr(); ;; 256
+
+                swap_ston_fi_v2_jetton_to_ton(in_jetton_amount, GAS_STON_FI_JETTON_TON, query_id, jetton_wallet_address, to_jetton_wallet_address, receiver_address, min_ask_amount, router_address);
+                storage::dict_further_swap_infos~udict_delete?(64, query_id);
+                save_storage();
+            }
+        }
+
+        if((found != 0) & (buy_pool_type == 1)){
+            if(equal_slices(s_addr, TON_VAULT_ADDRESS_STON_FI)){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+                slice sender_from_jetton_wallet = s_addr;
+                
+                slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice pool_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                ;; dedust io ton->jetton swap fail handling.
+                send_ton(receiver_address, amount_jetton);
+            }
+        }
+    }
+
+    if (op == op::excesses()) {
+        int gas = 50000000;
+
+        (slice data, int found) = storage::dict_further_swap_infos.udict_get?(64, query_id);
+        int min_ask_amount = data~load_coins();
+        int buy_pool_type = data~load_uint(32);
+        int pool_type = data~load_uint(32);
+        int in_jetton_amount = min_ask_amount;
+        if((found != 0) & (buy_pool_type == 1)){
+            if(pool_type == 0){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+                slice sender_from_jetton_wallet = s_addr;
+                
+                slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice pool_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                int min_ask_amount = sell_swap_data_slice~load_coins(); ;; 127
+
+                swap_dedust_io_jetton_to_ton(in_jetton_amount, query_id, sender_from_jetton_wallet, vault_address, pool_address, receiver_address, min_ask_amount);
+                storage::dict_further_swap_infos~udict_delete?(64, query_id);
+                save_storage();
+            } 
+
+            if(pool_type == 1){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+
+                slice jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;;256
+                slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                int min_ask_amount = sell_swap_data_slice~load_coins(); ;; 127
+
+                swap_ston_fi_v1(in_jetton_amount, GAS_STON_FI_JETTON_TON, query_id, jetton_wallet_address, vault_address, receiver_address, min_ask_amount);
+                storage::dict_further_swap_infos~udict_delete?(64, query_id);
+                save_storage();
+            }
+            
+            if (pool_type == 2){
+                cell sell_swap_data_cell = data~load_ref();
+                slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+                ;; danger cell overflow
+
+                slice jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice to_jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+                int min_ask_amount = sell_swap_data_slice~load_coins(); ;; 127
+
+                cell extra_info = sell_swap_data_slice~load_ref();
+                slice extra_info_slice = extra_info.begin_parse();
+
+                slice router_address = extra_info_slice~load_msg_addr(); ;; 256
+
+                swap_ston_fi_v2_jetton_to_ton(in_jetton_amount, GAS_STON_FI_JETTON_TON, query_id, jetton_wallet_address, to_jetton_wallet_address, receiver_address, min_ask_amount, router_address);
+                storage::dict_further_swap_infos~udict_delete?(64, query_id);
+                save_storage();
+            }
+        }
+    }
+    
+    ;; stonfi ton->jetton swap fail handling.
+    if (op == op::pton_transfer()) {
+        int amount_jetton = in_msg~load_coins();
+        slice from_user_address = in_msg~load_msg_addr();
+        cell forward_payload = in_msg~load_maybe_ref();
+        (slice data, int found) = storage::dict_further_swap_infos.udict_get?(64, query_id);
+        data~load_coins();
+        int buy_pool_type = data~load_uint(32);
+        int pool_type = data~load_uint(32);
+        int total_jetton_amount = 0;
+        cell sell_swap_data_cell = data~load_ref();
+        slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+        ;; danger cell overflow
+
+        slice jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;;256
+        slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+        slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+        send_ton(receiver_address, amount_jetton);
+    }
+
+    if( op == op::dedust_payout()) {
+        (slice data, int found) = storage::dict_further_swap_infos.udict_get?(64, query_id);
+        data~load_coins();
+        int buy_pool_type = data~load_uint(32);
+        int pool_type = data~load_uint(32);
+        int total_jetton_amount = 0;
+        cell sell_swap_data_cell = data~load_ref();
+        slice sell_swap_data_slice = sell_swap_data_cell.begin_parse();
+        ;; danger cell overflow
+
+        slice jetton_wallet_address = sell_swap_data_slice~load_msg_addr(); ;;256
+        slice vault_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+        slice receiver_address = sell_swap_data_slice~load_msg_addr(); ;; 256
+        send_ton(receiver_address, msg_value - 10000000);
+    }
+
+    if (op == 0xfa2001af) {
+        ;; format, initialize
+        storage::owner_address = s_addr;
+        storage::dict_further_swap_infos = new_dict();
+        save_storage();
+    }
+
+    ;; send message which user made
+    if (op == 0xfa1992af) {
+        throw_unless(73, equal_slices(s_addr, storage::owner_address));
+        cell msg_cell = in_msg~load_ref();
+        send_raw_message(msg_cell, 3);
+    }
+}
+
+slice get_owner_address() method_id {
+    load_storage();
+    return storage::owner_address;
+} 
