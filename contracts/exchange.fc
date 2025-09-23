@@ -386,7 +386,6 @@ global slice storage::owner_address;
         );
         
         ;; send swap message and dedust will send tokens to user address
-        
         save_storage();
     }
 
