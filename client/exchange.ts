@@ -131,10 +131,11 @@ async function runContract() {
         //         .storeCoins(40000000 + GAS_STON_FI_TON_JETTON) //  input_TON_amount + fee
         //         .storeCoins(100000000000000000000000)// min_ask_amount
         //         .storeAddress(targetJettonWalletAddressV2) // to_ston_fi_jetton_vault_address so jetton vault address of pool
-        //         .storeUint(2, 32) // 2: stonfi v2
+        //         .storeUint(2, 32) // 2: stonfi v2 buy
         //         .storeAddress(stonfiV2PoolAddress)
         //         .storeAddress(pTONVaultAddressV2) // pTON vault address of pool 
-        //         .storeUint(2, 32) // number of distributeing targets
+        //         // ------------------------------------------------- //
+        //         .storeUint(2, 32) // 2: stonfi v2 sell
         //         .storeRef(
         //             beginCell()
         //                 .storeAddress(jettonWallet.address) // jetton wallet address of contract
