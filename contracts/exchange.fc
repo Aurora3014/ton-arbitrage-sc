@@ -116,7 +116,7 @@ global slice storage::owner_address;
     cell msg = begin_cell()
         .store_uint(0x18, 6)
         .store_slice(from_jetton_wallet_address)  ;; destination
-        .store_coins(in_jetton_amount + GAS_STON_FI_TON_JETTON)
+        .store_coins(send_ton_amount)
         .store_uint(1, 107)
         .store_ref(body)
         .end_cell();
